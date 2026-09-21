@@ -1,0 +1,6 @@
+{
+  "tenants": [
+    { "slug": "northwind", "enabled_sources": ["orders", "email_events", "ad_spend"] },
+    { "slug": "lumen", "enabled_sources": ["orders", "email_events", "ad_spend"] }
+  ]
+}
