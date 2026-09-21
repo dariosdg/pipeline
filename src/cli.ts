@@ -15,7 +15,9 @@ type Config = { tenants: { slug: string; enabled_sources: Source[] }[] };
 const root = process.cwd();
 
 /** Returns the value immediately following a CLI option, if supplied. */
-const arg = (name: string) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
+const arg = (name: string) => {
+   const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1];
+ };
 
 /** Splits writes into independently committed batches, allowing a retry after a process crash. */
 const chunks = <T>(values: T[], size: number) => Array.from({ length: Math.ceil(values.length / size) }, (_, i) => values.slice(i * size, i * size + size));
@@ -44,7 +46,7 @@ async function migrate() {
 async function markFailure(tenant: string, source: Source, path: string, status: 'missing' | 'quarantined', error: string) {
   const id = await tenantId(tenant);
   await db.query('INSERT INTO ingestion_runs(tenant_id,source,artifact_path,status,error,finished_at) VALUES($1,$2,$3,$4,$5,now())', [id, source, path, status, error]);
-  console.error(`${tenant}/${source}/${path}: ${status}: ${error}`);
+  console.error(`${path}: ${status}: ${error}`);
 }
 
 /**
@@ -97,7 +99,10 @@ async function ingestBatch(batch: Batch, failAfter?: number) {
 /** Selects configured manifest batches and ingests them serially for clear run auditability. */
 async function ingest() {
   const manifest: Manifest = JSON.parse(await readFile(arg('--manifest') ?? join(root, 'manifest.json'), 'utf8'));
-  const cfg = await config(); const wantedTenant = arg('--tenant'); const wantedSource = arg('--source'); const failAfter = Number(arg('--fail-after-rows') ?? 0) || undefined;
+  const cfg = await config(); 
+  const wantedTenant = arg('--tenant');
+  const wantedSource = arg('--source'); 
+  const failAfter = Number(arg('--fail-after-rows') ?? 0) || undefined;
   const configured = new Map(cfg.tenants.map((t) => [t.slug, new Set(t.enabled_sources)]));
   const selected = manifest.batches.filter((b) => (!wantedTenant || b.tenant === wantedTenant) && (!wantedSource || b.source === wantedSource) && configured.get(b.tenant)?.has(b.source));
   if (!selected.length) throw new Error('No manifest batches match enabled tenant/source configuration.');
@@ -127,13 +132,17 @@ async function model() {
   }
 }
 
-/** Reports completed, missing, failed, and quarantined artifacts against manifest expectations. */
+/**
+ * Reports the latest state of each expected artifact against manifest expectations.
+ * Historical failed attempts remain auditable in `ingestion_runs`, but a later
+ * successful replay must clear the operational failure signal.
+ */
 async function status() {
   const manifest: Manifest = JSON.parse(await readFile(arg('--manifest') ?? join(root, 'manifest.json'), 'utf8'));
   const cfg = await config();
   for (const tenant of cfg.tenants) for (const source of tenant.enabled_sources) {
     const expected = manifest.batches.filter((b) => b.tenant === tenant.slug && b.source === source).length;
-    const result = await db.query("SELECT status,count(*)::int count FROM ingestion_runs r JOIN tenants t ON t.id=r.tenant_id WHERE t.slug=$1 AND r.source=$2 GROUP BY status", [tenant.slug, source]);
+    const result = await db.query("WITH latest_artifact_runs AS (SELECT DISTINCT ON (r.tenant_id,r.source,r.artifact_path) r.status FROM ingestion_runs r JOIN tenants t ON t.id=r.tenant_id WHERE t.slug=$1 AND r.source=$2 ORDER BY r.tenant_id,r.source,r.artifact_path,r.started_at DESC) SELECT status,count(*)::int count FROM latest_artifact_runs GROUP BY status", [tenant.slug, source]);
     const states = Object.fromEntries(result.rows.map((r) => [r.status, r.count]));
     console.log(`${tenant.slug.padEnd(10)} ${source.padEnd(14)} expected=${expected} completed=${states.completed ?? 0} missing=${states.missing ?? 0} failed=${(states.failed ?? 0) + (states.quarantined ?? 0)}`);
   }
