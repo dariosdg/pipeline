@@ -7,6 +7,3 @@ dist/
 # Local environment files may contain connection credentials.
 .env
 .env.*
-
-# Local presentation notes are intentionally not part of the delivered repository.
-GUIA_VIDEO.md
